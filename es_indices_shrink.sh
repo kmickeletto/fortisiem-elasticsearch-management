@@ -1,16 +1,16 @@
 #!/bin/bash
 
-max_days_in_hot=30                                                                              # Will ignore indices newer than 30 days
-index_prefix="fortisiem-event-"                                                                 # Should be fortisiem-event- in almost all cases
-index_suffix="-shrunk"                                                                          # Determines what new indices should be appended with
-shrink_node_name=                                                                               # Leave blank to use opportunistic mode
-purge_after_successful_shrink=true                                                              # Leave false for testing
-destination_box_type=warm                                                                       # box_type designator for relocating shunken indices
-warm_replia_count=1                                                                             # How many replicas to create on newly shrunken indices
-dest_adaptive_shard_count=true                                                                  # If true, uses least common multiple for shards, otherwise 1 will always be used
+max_days_in_hot=30                                                         # Will ignore indices newer than 30 days
+index_prefix="fortisiem-event-"                                            # Should be fortisiem-event- in almost all cases
+index_suffix="-shrunk"                                                     # Determines what new indices should be appended with
+shrink_node_name=                                                          # Leave blank to use opportunistic mode
+purge_after_successful_shrink=true                                         # Leave false for testing
+destination_box_type=warm                                                  # box_type designator for relocating shunken indices
+warm_replia_count=1                                                        # How many replicas to create on newly shrunken indices
+dest_adaptive_shard_count=true                                             # If true, uses least common multiple for shards, otherwise 1 will always be used
 delay_seconds_between_indices=60																# How many seconds to wait before processing next index
 wait_minutes_force_alloc_success=30																# How many minutes to wait for a retry allocation to succeed
-minimum_logging_level=DEBUG                                                                     # CRIT,ERROR,INFO,DEBUG,VERBOSE
+minimum_logging_level=DEBUG                                                # CRIT,ERROR,INFO,DEBUG,VERBOSE
 log_location=/opt/phoenix/log
 
 rotate_logs() {
