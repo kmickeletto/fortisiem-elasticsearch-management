@@ -1,16 +1,20 @@
 #!/bin/bash
 
-index_prefix=fortisiem-event-																	# Should be fortisiem-event- in almost all cases
-shrunk_suffix=-shrunk																			# Suffix for shrunk indices
-days_to_keep=400																				# Will ignore indices newer than 400 days
-dry_run=true																					# Runs in test mode, nothing is deleted
-safety_braking=true																				# Slows down deletion of indices to every 15 seconds
-minimum_logging_level=DEBUG                                                                     # CRIT,ERROR,INFO,DEBUG,VERBOSE
+index_prefix=fortisiem-event-							# Should be fortisiem-event- in almost all cases
+shrunk_suffix=-shrunk								# Suffix for shrunk indices
+max_days_to_keep=400								# Will ignore indices newer than 400 days
+dry_run=true									# Runs in test mode, nothing is deleted
+safety_braking=true								# Slows down deletion of indices to every 15 seconds
+minimum_logging_level=DEBUG							# CRIT,ERROR,INFO,DEBUG,VERBOSE
 
 if [ "$#" -gt 1 ]; then
     echo "Illegal number of parameters"
     echo "Usage: $(basename $0) [OPTIONAL:<days to keep>"
     exit 1
+fi
+
+if [[ -z $1 ]]; then
+  days_to_keep=$max_days_to_keep
 fi
 
 kill_myself() {
