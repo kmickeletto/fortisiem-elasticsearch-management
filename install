@@ -1,0 +1,24 @@
+#!/bin/bash
+
+phoenix_config=/opt/phoenix/config/phoenix_config.txt
+install_path=/opt/phoenix/bin
+install_target=phMonitorSupervisor
+
+if [[ ! -f $phoenix_config ]]; then
+  echo "Unable to locate $phoenix_config"
+  exit 1
+fi
+
+phRole=$(grep MON_ROLE "$phoenix_config" | cut -f2 -d=)
+if [[ $phRole != "$install_target" ]]; then
+  echo "Installation on $phRole is not advised.  Please only install on a supervisor"
+  exit 1
+fi
+
+source_dir=$(dirname "$(readlink -f "$0")")
+
+chmod +x "$source_dir"/es_*
+cp -f "$source_dir"/es_* "$install_path"
+
+echo "Installation Complete!"
+ls "$install_path"/es_*
