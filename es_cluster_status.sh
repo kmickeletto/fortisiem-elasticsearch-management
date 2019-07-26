@@ -1,11 +1,17 @@
 #!/bin/bash
 
+coord_prot=https://
+coord_host=supervisor-001.ord1.prod.isiem.rackspace.net
+coord_port=443
+coord_host_array=test
+
 if [ "$#" -gt 0 ]; then
     echo "Illegal number of parameters"
     echo "Usage: $(basename $0)"
     exit 1
 fi
 
+if [[ -z $coord_host_array ]]; then
 if [[ ! -f /opt/phoenix/config/phoenix_config.txt ]]; then
   echo "Unable to locate /opt/phoenix/config/phoenix_config.txt"
   exit 1
@@ -42,6 +48,7 @@ for (( i=0; i<${#coord_host_array[@]}; i++ )); do
     break
   fi
 done
+fi
 
 DRED=$'\033[0;31m'
 LRED=$'\033[1;31m'

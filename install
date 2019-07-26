@@ -20,5 +20,11 @@ source_dir=$(dirname "$(readlink -f "$0")")
 chmod +x "$source_dir"/es_*
 cp -f "$source_dir"/es_* "$install_path"
 
+packages=($(ls -1 "$source_dir"/packages))
+
+for package in ${packages[@]}; do
+	rpm --quiet -q "${package%.rpm}" || rpm --quiet -i "${source_dir}/packages/${package}"
+done
+
 echo "Installation Complete!"
 ls "$install_path"/es_*
