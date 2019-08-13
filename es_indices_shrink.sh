@@ -1,22 +1,26 @@
 #!/bin/bash
 
-max_days_in_hot=30                                                         # Will ignore indices newer than 30 days
-index_prefix="fortisiem-event-"                                            # Should be fortisiem-event- in almost all cases
-index_suffix="-shrunk"                                                     # Determines what new indices should be appended with
-shrink_node_name=                                                          # Leave blank to use opportunistic mode
-purge_after_successful_shrink=true                                         # Leave false for testing
-destination_box_type=warm                                                  # box_type designator for relocating shunken indices
-warm_replia_count=1                                                        # How many replicas to create on newly shrunken indices
-dest_adaptive_shard_count=true                                             # If true, uses least common multiple for shards, otherwise 1 will always be used
-delay_seconds_between_indices=60																# How many seconds to wait before processing next index
-wait_minutes_force_alloc_success=30																# How many minutes to wait for a retry allocation to succeed
-minimum_logging_level=DEBUG                                                # CRIT,ERROR,INFO,DEBUG,VERBOSE
+max_days_in_hot=30                              # Will ignore indices newer than 30 days
+index_prefix="fortisiem-event-"                 # Should be fortisiem-event- in almost all cases
+index_suffix="-shrunk"                          # Determines what new indices should be appended with
+shrink_node_name=                               # Leave blank to use opportunistic mode
+purge_after_successful_shrink=true              # Leave false for testing
+source_box_type=hot                             # box_type designator for source indices, usually hot
+destination_box_type=warm                       # box_type designator for relocating shunken indices, usually warm
+warm_replia_count=1                             # How many replicas to create on newly shrunken indices
+dest_adaptive_shard_count=true                  # If true, uses least common multiple for shards, otherwise 1 will always be used
+delay_seconds_between_indices=60                # How many seconds to wait before processing next index
+wait_minutes_force_alloc_success=30             # How many minutes to wait for a retry allocation to succeed
+minimum_logging_level=DEBUG                     # CRIT,ERROR,INFO,DEBUG,VERBOSE
 log_location=/opt/phoenix/log
 
 rotate_logs() {
 echo "$log_location/es_shrinktowarm.log {
+  dateext
+  create 644 admin admin
   rotate 12
   monthly
+  dateformat -%Y-%m
   compress
   missingok
   notifempty
@@ -36,6 +40,7 @@ kill_myself() {
 }
 
 logit() {
+  test -f $log_location/es_shrinktowarm.log || (touch $log_location/es_shrinktowarm.log && chown admin:admin $log_location/es_shrinktowarm.log)
   current_time=$(date '+%F %T')
   case $1 in
     6)
@@ -96,7 +101,7 @@ fetch_fs_es_config() {
   local es_enabled
   local es_coord_user
   local es_coord_pw
-  
+
   if [[ ! -f /opt/phoenix/config/phoenix_config.txt ]]; then
     logit 1 "${FUNCNAME[0]}" "Unable to locate /opt/phoenix/config/phoenix_config.txt"
     return 1
@@ -110,7 +115,7 @@ fetch_fs_es_config() {
   es_enabled=$(grep enable= <<<"$phoenix_es_config" | cut -f2 -d'=')
   es_coord_auth="${es_coord_user}:${es_coord_pw}"
   box_type="$destination_box_type"
-  
+
   if [[ $es_enabled != true ]]; then
     logit 1 "${FUNCNAME[0]}" "Elasticsearch is not enabled for this FortiSIEM instance"
     return 1
@@ -155,26 +160,26 @@ locate_valid_coord() {
 }
 
 check_jq() {
-  exec 3>&2
-  exec 2> /dev/null
   local jq_path
   local jq_version
 
-  if ! rpm -qa | grep --quiet jq; then
-    logit 1 "${FUNCNAME[0]}" "Unable to locate jq.  Please install and retry"
-    return 1
-  else
+  if which jq >/dev/null 2>&1; then
     jq_path=$(which jq)
-    if [[ $? -gt 0 ]]; then
-      logit 1 "${FUNCNAME[0]}" "Unable to locate jq.  Please install and retry"
-      return 1
-    else
+    jq_version=$(jq -V | perl -pe 's/jq-(.*)$/\1/')
+    logit 5 "${FUNCNAME[0]}" "jq version $jq_version has been located at $jq_path"
+    return 0
+  fi
+  if rpm -ql jq | grep --quiet -E '\/jq$'; then
+    jq_path=$(rpm -ql jq | grep -E '\/jq$')
+    if $jq_path --version >/dev/null 2>&1; then
       jq_version=$(jq -V | perl -pe 's/jq-(.*)$/\1/')
       logit 5 "${FUNCNAME[0]}" "jq version $jq_version has been located at $jq_path"
-      return 0
+     return 0
+    else
+      logit 1 "${FUNCNAME[0]}" "Unable to locate jq.  Please install and retry"
+      return 1
     fi
   fi
-  exec 2>&3
 }
 
 
@@ -410,7 +415,7 @@ change_routing_allocation() {
       RED)
         logit 2 "${FUNCNAME[0]}" "${index_name} is red which indicates a failure, it will be skipped for now"
         delete_index "${index_name}"
-        break
+        return 1
         ;;
       YELLOW)
         moving_shard_count=$(curl -u "$es_coord_auth" -s "${es_coord_host}/_cat/recovery/${index_name}?format=json" | jq '.[]|select(.stage!="done")|select(.stage="peer")|.index' | wc -l)
@@ -424,14 +429,17 @@ change_routing_allocation() {
           if [[ $wait_for_status_count -gt 5 ]]; then
             logit 2 "${FUNCNAME[0]}" "Unable to determine why ${index_name} is not moving, skipping"
             delete_index "${index_name}"
-            break
+            return 1
           fi
         fi
         sleep 60
         ;;
       GREEN)
         logit 5 "${FUNCNAME[0]}" "${index_name} is now $(index_health_status "${index_name}")"
-        logit 4 "${FUNCNAME[0]}" "${index_name%$index_suffix} has successfully been shrunk to ${index_name}"
+        if [[ ${index_name} =~ ${index_suffix}$ ]]; then
+          logit 4 "${FUNCNAME[0]}" "${index_name%$index_suffix} has successfully been shrunk to ${index_name}"
+        fi
+        return 0
         ;;
       *)
         ;;
@@ -496,7 +504,7 @@ check_unassigned_shards() {
   local index_name
   local unassigned_shards
   logit 5 "${FUNCNAME[0]}" "Checking for unassigned shards"
-  
+
   unassigned_shards=($(curl -u "$es_coord_auth" -s -XGET "${es_coord_host}/_cat/shards/${index_name}" | grep UNASSIGNED  | awk '{print $1}'))
   logit 4 "${FUNCNAME[0]}" "Found ${#unassigned_shards[@]} unassigned shards"
   for index in ${unassigned_shards[@]}; do
@@ -504,11 +512,11 @@ check_unassigned_shards() {
   done
   return ${#unassigned_shards[@]}
 }
-  
+
 force_shard_allocation() {
   local unassigned_shards
   local unassigned_shards_counter
-  
+
   until check_unassigned_shards; do
     unassigned_shards=$?
     (( unassigned_shards_counter++ ))
@@ -548,23 +556,26 @@ get_minimum_date() {
 
 fetch_indices() {
   local total_indices_count
+  local eligible_indices_count
+  local json_indices_list
 
-  logit 5 "${FUNCNAME[0]}" "Executing query against ${es_coord_host}/_cat/indices/${index_prefix}* for all matching incides"
-  indices_list=$(curl -u "$es_coord_auth" -sf -XGET "${es_coord_host}/_cat/indices/${index_prefix}*?h=index")
+  logit 5 "${FUNCNAME[0]}" "Executing query against ${es_coord_host}/${index_prefix}*/_settings for all matching incides"
+  json_indices_list=$(curl -u "$es_coord_auth" -sf -XGET "${es_coord_host}/${index_prefix}*/_settings")
   if [[ $? -gt 0 ]]; then
-    logit 1 "${FUNCNAME[0]}" "Unable to fetch the list of indices from ${es_coord_host}/_cat/indices/${index_prefix}*"
+    logit 1 "${FUNCNAME[0]}" "Unable to fetch the list of indices from ${es_coord_host}/${index_prefix}*/_settings"
     return 1
   fi
-  indices_list=$(grep -E "^${index_prefix}[0-9]{4}\.[0-1][0-9]\.[0-3][0-9]" <<< "$indices_list" | sort  -t "." -k2)
-  total_indices_count=$(grep -Ev '^$' <<< "$indices_list" | wc -l)
-  indices_list=$(grep -Ev -- "${index_suffix}" <<< "$indices_list" | sort -t "." -k2)
-  filtered_total_indices_count=$(grep -Ev '^$' <<< "$indices_list" | wc -l)
-  logit 5 "${FUNCNAME[0]}" "Found $total_indices_count indices with pattern ${index_prefix} and date format yyyy.MM.dd"
-  logit 4 "${FUNCNAME[0]}" "Found $filtered_total_indices_count indices with pattern ${index_prefix} and date format yyyy.MM.dd excluding ${index_suffix}"
+#  indices_list=$(grep -E "^${index_prefix}[0-9]{4}\.[0-1][0-9]\.[0-3][0-9]" <<< "$indices_list" | sort  -t "." -k2)
+  total_indices_count=$(jq '[.|to_entries[]|.key]|length' <<< "$json_indices_list")
+#  indices_list=$(grep -Ev -- "${index_suffix}" <<< "$indices_list" | sort -t "." -k2)
+  eligible_indices_count=$(jq "[.|to_entries[]|select(.value.settings.index.routing.allocation.require.box_type==\"$source_box_type\")|.key]|length" <<< "$json_indices_list")
+  indices_list=$(jq -r ".|to_entries[]|select(.value.settings.index.routing.allocation.require.box_type!=\"${destination_box_type}\")|.key" <<< "$json_indices_list" | sort -t "." -k2)
+  logit 5 "${FUNCNAME[0]}" "Found $total_indices_count indices with pattern ${index_prefix}*"
+  logit 4 "${FUNCNAME[0]}" "Found $eligible_indices_count indices with pattern ${index_prefix}* on ${source_box_type} nodes"
   return 0
 }
 
-logit 4 script_identity "FortiSIEM es_indices_shrink version 1.0.0 ® Fortinet 2019 All Rights Reserved"
+logit 4 script_identity "FortiSIEM es_indices_shrink version 1.1.0 ® Fortinet 2019 All Rights Reserved"
 
 if ! check_jq; then
   logit 1 startup_init "A critical error occured, exiting"
@@ -609,6 +620,7 @@ while read -r index && [[ -n $index ]]; do
       logit 4 main_body "Waiting $delay_seconds_between_indices seconds for the system to quiescence before continuing"
       sleep $delay_seconds_between_indices
     fi
+    logit 4 main_start_new_index "Beginning to process index $index"
     logit 5 main_preshrink_check "Checking to see if any other indices are using the name ${index}${index_suffix}"
     if index_exists "${index}${index_suffix}"; then
       logit 3 main_preshrink_check "Skipping index ${index} because there is already an existing index named ${index}${index_suffix}"
@@ -618,7 +630,10 @@ while read -r index && [[ -n $index ]]; do
     fi
     fetch_shard_count "$index"
     if [[ $index_shard_count -le 1 ]]; then
-      logit 2 check_shard_count "Index $index only has 1 shard, it cannot be shrunk further"
+      logit 4 check_shard_count "Index $index only has 1 shard, it cannot be shrunk further, simply relocating it to $destination_box_type"
+      change_routing_allocation "${index}"
+      logit 4 main_finish_new_index "Finished processing index $index"
+      (( indices_counter++ ))
       continue
     fi
     relocate_shards "$index"
@@ -643,9 +658,16 @@ while read -r index && [[ -n $index ]]; do
     fi
     merge_index_segments "${index}${index_suffix}"
     if [[ $purge_after_successful_shrink = true ]]; then
-      change_routing_allocation "${index}${index_suffix}"
+      if change_routing_allocation "${index}${index_suffix}"; then
+        logit 4 "main_status" "$index has successfully been shrunk to ${index_name}${index_suffix}"
+      else
+        logit 3 "main_status" "$index failed to successfully shrink"
+        logit 4 main_finish_new_index "Finished processing index $index"
+        continue
+      fi
       if ! update_index_replica_count "${index}${index_suffix}"; then
         logit 2 index_replia_count "Unable to set replica count on ${index}${index_suffix}"
+        logit 4 main_finish_new_index "Finished processing index $index"
         continue
       fi
       if compare_doc_counts "${index}" "${index}${index_suffix}"; then
@@ -653,13 +675,14 @@ while read -r index && [[ -n $index ]]; do
       else
         logit 2 main_compare_indices "${index} and ${index}${index_suffix} indices do not have the same document count, purging shrunk index and skipping"
         delete_index "${index}${index_suffix}"
+        logit 4 main_finish_new_index "Finished processing index $index"
         continue
       fi
       if ! create_index_alias "${index}"; then
         logit 1 index_alias "A critical error occured and the script will be terminated for safety reasons"
         kill_myself 1
       fi
-	  force_shard_allocation
+      force_shard_allocation
       (( indices_counter++ ))
     else
       logit 3 main_body "purge_after_successful_shrink is not set to true, so not creating alias, creating additional replicas or purging ${index}"
@@ -668,6 +691,7 @@ while read -r index && [[ -n $index ]]; do
     logit 5 main_body "Skipping ${index}${index_suffix} because it is not beyond $max_days_in_hot days old"
     (( skipped_indices_counter++ ))
   fi
+  logit 4 main_finish_new_index "Finished processing index $index"
 done <<< "$indices_list"
 
 # Due to this bug, https://github.com/VenRaaS/elk/issues/8 it is possible that shards won't allocate properly after moving.
