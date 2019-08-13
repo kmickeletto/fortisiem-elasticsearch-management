@@ -156,7 +156,25 @@ locate_valid_coord() {
     return 1
   done
   logit 4 "${FUNCNAME[0]}" "Successfully connected to ${es_coord_host}"
-  return 0
+  if check_cluster_version; then
+    return 0
+  else
+    exit 1
+  fi
+}
+
+check_cluster_version() {
+  local es_cluster_version
+
+  es_cluster_version=$(curl -u "$es_coord_auth" -s -XGET "${es_coord_host}" | jq -r '.version.number') 
+  if [[ $es_cluster_version =~ ^(6\.4\.)|(5\.6\.) ]]; then
+    logit 4 "${FUNCNAME[0]}" "Cluster version is currently running version ${es_cluster_version}"
+    return 0
+  else
+    logit 1 "${FUNCNAME[0]}" "Cluster is currently running an unsupported version of Elasticsearch, unable to continue"
+    logit 1 "${FUNCNAME[0]}" "Supported variants are currently 5.6.x and 6.4.x"
+    return 1
+  fi
 }
 
 check_jq() {
