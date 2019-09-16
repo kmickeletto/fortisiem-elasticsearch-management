@@ -138,7 +138,7 @@ locate_valid_coord() {
     curl -u "$es_coord_auth" -q -s --connect-timeout 2 -XGET "${es_coord_prot}${coord_host_array[$i]}:$es_coord_port" -o /dev/null
     if [[ $? -eq 0 ]]; then
       es_coord_host="${coord_host_array[$i]}:${es_coord_port}"
-          logit 5 "${FUNCNAME[0]}" "Successfully connected to ${es_coord_host}"
+          logit 5 "${FUNCNAME[0]}" "Successfully connected to ${es_coord_prot}${es_coord_host}"
       break
     else
       logit 5 "${FUNCNAME[0]}" "Unable to connect to ${es_coord_prot}${es_coord_hosts[$i]}:$es_coord_port"
@@ -155,7 +155,7 @@ locate_valid_coord() {
     logit 1 "${FUNCNAME[0]}" "Unable to connect to any coordinator host!"
     return 1
   done
-  logit 4 "${FUNCNAME[0]}" "Successfully connected to ${es_coord_host}"
+  logit 4 "${FUNCNAME[0]}" "Successfully connected to ${es_coord_prot}${es_coord_host}"
   if check_cluster_version; then
     return 0
   else
@@ -166,13 +166,13 @@ locate_valid_coord() {
 check_cluster_version() {
   local es_cluster_version
 
-  es_cluster_version=$(curl -u "$es_coord_auth" -s -XGET "${es_coord_host}" | jq -r '.version.number') 
-  if [[ $es_cluster_version =~ ^(6\.4\.)|(5\.6\.) ]]; then
+  es_cluster_version=$(curl -u "$es_coord_auth" -s -XGET "${es_coord_host}" | jq -r '.version.number')
+  if [[ $es_cluster_version =~ ^(6\.[48]\.)|(5\.6\.) ]]; then
     logit 4 "${FUNCNAME[0]}" "Cluster version is currently running version ${es_cluster_version}"
     return 0
   else
     logit 1 "${FUNCNAME[0]}" "Cluster is currently running an unsupported version of Elasticsearch, unable to continue"
-    logit 1 "${FUNCNAME[0]}" "Supported variants are currently 5.6.x and 6.4.x"
+    logit 1 "${FUNCNAME[0]}" "Supported variants are currently 5.6.x, 6.4.x, and 6.8.x"
     return 1
   fi
 }
@@ -706,8 +706,9 @@ while read -r index && [[ -n $index ]]; do
       logit 3 main_body "purge_after_successful_shrink is not set to true, so not creating alias, creating additional replicas or purging ${index}"
     fi
   else
-    logit 5 main_body "Skipping ${index}${index_suffix} because it is not beyond $max_days_in_hot days old"
+    logit 5 main_body "Skipping ${index} because it is not beyond $max_days_in_hot days old"
     (( skipped_indices_counter++ ))
+    continue
   fi
   logit 4 main_finish_new_index "Finished processing index $index"
 done <<< "$indices_list"
