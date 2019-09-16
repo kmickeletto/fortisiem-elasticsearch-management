@@ -17,6 +17,7 @@ fi
 
 source_dir=$(dirname "$(readlink -f "$0")")
 
+dos2unix "$source_dir"/es_*
 chmod +x "$source_dir"/es_*
 cp -f "$source_dir"/es_* "$install_path"
 
